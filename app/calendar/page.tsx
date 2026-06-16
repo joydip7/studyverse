@@ -10,6 +10,15 @@ import {
   ChevronLeft, ChevronRight, Plus, X, Clock, Play, Bell, Calendar as CalIcon, Check, MoreVertical, Trash2,
   Activity, FolderGit2
 } from "lucide-react"
+import { db, auth } from "@/lib/firebase"
+import {
+  collection,
+  getDocs,
+  addDoc,
+  deleteDoc,
+  doc,
+  serverTimestamp
+} from "firebase/firestore"
 
 // ─── Types and Config ──────────────────────────────────────────
 interface StudySession {
@@ -21,11 +30,6 @@ interface StudySession {
   duration: number // in hours
   reminder: boolean
 }
-
-const MOCK_SESSIONS: StudySession[] = [
-  { id: "s1", subject: "Physics", topic: "Quantum Mechanics", date: new Date().toISOString().split("T")[0], startTime: "14:00", duration: 2, reminder: true },
-  { id: "s2", subject: "Math", topic: "Linear Algebra Exam Prep", date: new Date().toISOString().split("T")[0], startTime: "18:00", duration: 1.5, reminder: false },
-]
 
 // ─── Sidebar Helpers ────────────────────────────────────────
 const navLinks = [
@@ -56,16 +60,23 @@ export default function CalendarPage() {
   const [formDur, setFormDur] = useState("1")
   const [formRemind, setFormRemind] = useState(false)
 
-  useEffect(() => {
-    const stored = localStorage.getItem("studyverse_calendar")
-    if (stored) setSessions(JSON.parse(stored))
-    else setSessions(MOCK_SESSIONS)
-  }, [])
+  const loadSessions = async () => {
+    try {
+      const snapshot = await getDocs(collection(db, "calendar_sessions"));
+      const data = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      console.log("Firestore sessions:", data);
+      setSessions(data as StudySession[]);
+    } catch (error) {
+      console.error("Firestore error:", error);
+    }
+  };
 
-  const persist = (data: StudySession[]) => {
-    localStorage.setItem("studyverse_calendar", JSON.stringify(data))
-    setSessions(data)
-  }
+  useEffect(() => {
+    loadSessions();
+  }, []);
 
   // Calendar Logic
   const year = currentDate.getFullYear()
@@ -82,23 +93,47 @@ export default function CalendarPage() {
     setShowForm(false)
   }
 
-  const addSession = () => {
-    if (!formSubj.trim()) return
-    const newSession: StudySession = {
-      id: Date.now().toString(),
+  const addSession = async () => {
+    if (!formSubj.trim()) return;
+    const newSessionData = {
       subject: formSubj.trim(),
       topic: formTopic.trim(),
       date: selectedDate,
       startTime: formTime,
       duration: parseFloat(formDur) || 1,
-      reminder: formRemind
-    }
-    persist([...sessions, newSession])
-    setShowForm(false)
-    setFormSubj(""); setFormTopic(""); setFormTime("12:00"); setFormDur("1"); setFormRemind(false)
-  }
+      reminder: formRemind,
+    };
 
-  const deleteSession = (id: string) => persist(sessions.filter(s => s.id !== id))
+    try {
+      const user = auth.currentUser;
+      await addDoc(collection(db, "calendar_sessions"), {
+        ...newSessionData,
+        userId: user?.uid || null,
+        createdAt: serverTimestamp(),
+      });
+      console.log("Session added successfully");
+      await loadSessions();
+    } catch (error) {
+      console.error("Firestore error:", error);
+    }
+
+    setShowForm(false);
+    setFormSubj("");
+    setFormTopic("");
+    setFormTime("12:00");
+    setFormDur("1");
+    setFormRemind(false);
+  };
+
+  const deleteSession = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, "calendar_sessions", id));
+      console.log("Session deleted successfully");
+      await loadSessions();
+    } catch (error) {
+      console.error("Firestore error:", error);
+    }
+  };
 
   const selectedSessions = sessions.filter(s => s.date === selectedDate).sort((a, b) => a.startTime.localeCompare(b.startTime))
   
